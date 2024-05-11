@@ -1,13 +1,13 @@
 FROM python:3.10-alpine
 
-WORKDIR /app
+WORKDIR /pymud
 
 COPY . .
 
-EXPOSE 3000
+EXPOSE 27017
 
 RUN apk update && apk --no-cache add openssl bash curl &&\
-    chmod +x app.py &&\
+    chmod +x pymud.py &&\
     pip install -r requirements.txt
     
-CMD ["python3", "app.py"]
+CMD ["python3", "pymud.py"]
