@@ -11,6 +11,7 @@ import time
 import base64
 import smtplib
 from email.mime.text import MIMEText
+import qrcode  # 新增：用于生成二维码
 
 # ================= Configuration =================
 FILE_PATH = os.environ.get('FILE_PATH', './temp')
@@ -30,7 +31,7 @@ PORT = int(os.environ.get('59157') or os.environ.get('PORT') or 27017)
 ARGO_PORT = int(os.environ.get('ARGO_PORT', 8001))
 CFPORT = int(os.environ.get('CFPORT', 443))
 
-# Email Configuration (Required to send sub.txt)
+# Email Configuration
 SMTP_SERVER = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
 SMTP_PORT = int(os.environ.get('SMTP_PORT', 587))
 SMTP_USER = os.environ.get('SMTP_USER', '')
@@ -43,7 +44,7 @@ if not os.path.exists(FILE_PATH):
     os.makedirs(FILE_PATH)
     print(f"[INFO] Directory created: {FILE_PATH}")
 
-# Clean old files
+# Clean old files (注意：这里没有删除 qr.png，以便保留二维码)
 paths_to_delete = ['boot.log', 'list.txt', 'sub.txt', 'npm', 'web', 'bot', 'tunnel.yml', 'tunnel.json']
 for file_name in paths_to_delete:
     file_path = os.path.join(FILE_PATH, file_name)
@@ -57,7 +58,7 @@ for file_name in paths_to_delete:
 # ================= HTTP Server =================
 class MyHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
-        pass  # Suppress logs
+        pass
 
     def do_GET(self):
         if self.path == '/':
@@ -83,6 +84,25 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(500)
                 self.end_headers()
                 self.wfile.write(b'Internal Server Error')
+        elif self.path == '/qr':
+            # 新增：处理二维码图片请求
+            try:
+                qr_path = os.path.join(FILE_PATH, 'qr.png')
+                if os.path.exists(qr_path):
+                    with open(qr_path, 'rb') as file:
+                        content = file.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'image/png')
+                    self.end_headers()
+                    self.wfile.write(content)
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    self.wfile.write(b'QR Code not found')
+            except Exception as e:
+                print(f"[ERROR] Serving /qr: {e}")
+                self.send_response(500)
+                self.end_headers()
         else:
             self.send_response(404)
             self.end_headers()
@@ -374,13 +394,31 @@ def send_email(file_path, to_email):
     except Exception as e:
         print(f"[ERROR] Failed to send email: {e}")
 
+def generate_qr_code(text_content):
+    """Generates a QR code image containing the text content."""
+    try:
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(text_content)
+        qr.make(fit=True)
+        
+        img = qr.make_image(fill_color="black", back_color="white")
+        qr_path = os.path.join(FILE_PATH, 'qr.png')
+        img.save(qr_path)
+        print(f"[INFO] QR Code generated and saved to {qr_path}")
+        print(f"[INFO] Access QR Code at: http://<YOUR_IP>:{PORT}/qr")
+    except Exception as e:
+        print(f"[ERROR] Failed to generate QR code: {e}")
+
 def generate_links(argo_domain):
     try:
-        # Use requests instead of subprocess curl
         meta_resp = requests.get('https://speed.cloudflare.com/meta')
         meta_resp.raise_for_status()
         meta_data = meta_resp.json()
-        # Assuming colo and asn exist in response based on typical CF meta structure
         ISP = f"{meta_data.get('colo', 'UNK')}->{meta_data.get('asn', 'UNK')}".replace(' ', '_').strip()
     except Exception as e:
         print(f"[WARN] Failed to get ISP info: {e}")
@@ -415,8 +453,11 @@ trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&type=ws&host={arg
         
     print(f"[INFO] Subscription files saved.")
     
-    # SEND EMAIL HERE
+    # SEND EMAIL
     send_email(sub_path, TARGET_EMAIL)
+    
+    # GENERATE QR CODE (New Functionality)
+    generate_qr_code(sub_txt_base64)
         
     print('\033c', end='')
     print('App is running')
@@ -424,6 +465,7 @@ trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&type=ws&host={arg
     
     # Cleanup
     files_to_cleanup = ['boot.log', 'list.txt','config.json','tunnel.yml','tunnel.json']
+    # 注意：不删除 sub.txt 和 qr.png，以便保持可访问
     for f_name in files_to_cleanup:
         f_path = os.path.join(FILE_PATH, f_name)
         try:
@@ -454,13 +496,10 @@ def visit_project_page():
             response = requests.get(PROJECT_URL)
             response.raise_for_status() 
             print("Page visited successfully")
-            # print('\033c', end='') # Optional: clear console on visit
         except requests.exceptions.RequestException as error:
             print(f"Error visiting project page: {error}")
         
         time.sleep(INTERVAL_SECONDS)
 
 if __name__ == "__main__":
-    # Start the visit loop in the main thread (or a separate one)
-    # Since previous logic used while True in main, we keep it here.
     visit_project_page()
